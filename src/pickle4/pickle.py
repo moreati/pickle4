@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 """Create portable serialized representations of Python objects.
 
 See module copyreg for a mechanism for registering custom picklers.
@@ -23,9 +24,12 @@ Misc variables:
 
 """
 
+# TODO
+#   repr
+#   fix_imports
 from types import FunctionType
-from copyreg import dispatch_table
-from copyreg import _extension_registry, _inverted_registry, _extension_cache
+from six.moves.copyreg import dispatch_table
+from six.moves.copyreg import _extension_registry, _inverted_registry, _extension_cache
 from itertools import islice
 from functools import partial
 import sys
@@ -34,7 +38,9 @@ from struct import pack, unpack
 import re
 import io
 import codecs
-import _compat_pickle
+from . import _compat_pickle
+
+import six
 
 __all__ = ["PickleError", "PicklingError", "UnpicklingError", "Pickler",
            "Unpickler", "dump", "dumps", "load", "loads"]
@@ -181,7 +187,7 @@ FRAME            = b'\x95'  # indicate the beginning of a new frame
 __all__.extend([x for x in dir() if re.match("[A-Z][A-Z0-9_]+$", x)])
 
 
-class _Framer:
+class _Framer(object):
 
     _FRAME_SIZE_MIN = 4
     _FRAME_SIZE_TARGET = 64 * 1024
@@ -202,7 +208,10 @@ class _Framer:
         if self.current_frame:
             f = self.current_frame
             if f.tell() >= self._FRAME_SIZE_TARGET or force:
-                data = f.getbuffer()
+                try:
+                    data = f.getbuffer()
+                except AttributeError:
+                    data = buffer(f.getvalue())
                 write = self.file_write
                 if len(data) >= self._FRAME_SIZE_MIN:
                     # Issue a single call to the write method of the underlying
@@ -244,7 +253,7 @@ class _Framer:
         write(payload)
 
 
-class _Unframer:
+class _Unframer(object):
 
     def __init__(self, file_read, file_readline, file_tell=None):
         self.file_read = file_read
@@ -295,8 +304,9 @@ def _getattribute(obj, name):
             parent = obj
             obj = getattr(obj, subpath)
         except AttributeError:
-            raise AttributeError("Can't get attribute {!r} on {!r}"
-                                 .format(name, obj)) from None
+            six.raise_from(AttributeError("Can't get attribute {!r} on {!r}"
+                                          .format(name, obj)),
+                           None)
     return obj, parent
 
 def whichmodule(obj, name):
@@ -316,7 +326,7 @@ def whichmodule(obj, name):
             pass
     return '__main__'
 
-def encode_long(x):
+def _encode_long_int_to_bytes(x):
     r"""Encode a long to a two's complement little-endian binary string.
     Note that 0 is a special case, returning an empty string, to save a
     byte in the LONG1 pickling context.
@@ -346,7 +356,7 @@ def encode_long(x):
             result = result[:-1]
     return result
 
-def decode_long(data):
+def _decode_long_int_from_bytes(data):
     r"""Decode a long from a two's complement little-endian binary string.
 
     >>> decode_long(b'')
@@ -366,12 +376,117 @@ def decode_long(data):
     """
     return int.from_bytes(data, byteorder='little', signed=True)
 
+def _encode_long(x):
+    r"""Encode a long to a two's complement little-endian binary string.
+    Note that 0 is a special case, returning an empty string, to save a
+    byte in the LONG1 pickling context.
+
+    >>> encode_long(0)
+    b''
+    >>> encode_long(255)
+    b'\xff\x00'
+    >>> encode_long(32767)
+    b'\xff\x7f'
+    >>> encode_long(-256)
+    b'\x00\xff'
+    >>> encode_long(-32768)
+    b'\x00\x80'
+    >>> encode_long(-128)
+    b'\x80'
+    >>> encode_long(127)
+    b'\x7f'
+    >>>
+    """
+
+    if x == 0:
+        return b''
+    if x > 0:
+        ashex = hex(x)
+        assert ashex.startswith("0x")
+        njunkchars = 2 + ashex.endswith('L')
+        nibbles = len(ashex) - njunkchars
+        if nibbles & 1:
+            # need an even # of nibbles for unhexlify
+            ashex = "0x0" + ashex[2:]
+        elif int(ashex[2], 16) >= 8:
+            # "looks negative", so need a byte of sign bits
+            ashex = "0x00" + ashex[2:]
+    else:
+        # Build the 256's-complement:  (1L << nbytes) + x.  The trick is
+        # to find the number of bytes in linear time (although that should
+        # really be a constant-time task).
+        ashex = hex(-x)
+        assert ashex.startswith("0x")
+        njunkchars = 2 + ashex.endswith('L')
+        nibbles = len(ashex) - njunkchars
+        if nibbles & 1:
+            # Extend to a full byte.
+            nibbles += 1
+        nbits = nibbles * 4
+        x += 1 << nbits
+        assert x > 0
+        ashex = hex(x)
+        njunkchars = 2 + ashex.endswith('L')
+        newnibbles = len(ashex) - njunkchars
+        if newnibbles < nibbles:
+            ashex = "0x" + "0" * (nibbles - newnibbles) + ashex[2:]
+        if int(ashex[2], 16) < 8:
+            # "looks positive", so need a byte of sign bits
+            ashex = "0xff" + ashex[2:]
+
+    if ashex.endswith('L'):
+        ashex = ashex[2:-1]
+    else:
+        ashex = ashex[2:]
+    assert len(ashex) & 1 == 0, (x, ashex)
+    binary = _binascii.unhexlify(ashex)
+    return bytes(binary[::-1])
+
+def _decode_long(data):
+    r"""Decode a long from a two's complement little-endian binary string.
+
+    >>> decode_long(b'')
+    0
+    >>> decode_long(b"\xff\x00")
+    255
+    >>> decode_long(b"\xff\x7f")
+    32767
+    >>> decode_long(b"\x00\xff")
+    -256
+    >>> decode_long(b"\x00\x80")
+    -32768
+    >>> decode_long(b"\x80")
+    -128
+    >>> decode_long(b"\x7f")
+    127
+    """
+
+    nbytes = len(data)
+    if nbytes == 0:
+        return 0
+    ashex = _binascii.hexlify(data[::-1])
+    n = int(ashex, 16) # quadratic time before Python 2.3; linear now
+    if unpack('B', data[-1])[0] >= 0x80:
+        n -= 1 << (nbytes * 8)
+    return n
+
+try:
+    _encode_long_int_to_bytes(42)
+    encode_long = _encode_long_int_to_bytes
+except AttributeError:
+    encode_long = _encode_long
+
+try:
+    _decode_long_int_from_bytes(b"\x7f")
+    decode_long = _decode_long_int_from_bytes
+except AttributeError
+    decode_long = _decode_long
 
 # Pickling machinery
 
-class _Pickler:
+class _Pickler(object):
 
-    def __init__(self, file, protocol=None, *, fix_imports=True):
+    def __init__(self, file, protocol=None, fix_imports=True):
         """This takes a binary file for writing a pickle data stream.
 
         The optional *protocol* argument tells the pickler to use the
@@ -531,7 +646,7 @@ class _Pickler:
                                         (t.__name__, obj))
 
         # Check for string returned by reduce(), meaning "save as global"
-        if isinstance(rv, str):
+        if isinstance(rv, six.string_types):
             self.save_global(obj, rv)
             return
 
@@ -559,7 +674,7 @@ class _Pickler:
             self.write(BINPERSID)
         else:
             try:
-                self.write(PERSID + str(pid).encode("ascii") + b'\n')
+                self.write(PERSID + six.text_type(pid).encode("ascii") + b'\n')
             except UnicodeEncodeError:
                 raise PicklingError(
                     "persistent IDs in protocol 0 must be ASCII strings")
@@ -721,7 +836,7 @@ class _Pickler:
                 self.save_reduce(bytes, (), obj=obj)
             else:
                 self.save_reduce(codecs.encode,
-                                 (str(obj, 'latin1'), 'latin1'), obj=obj)
+                                 (six.text_type(obj, 'latin1'), 'latin1'), obj=obj)
             return
         n = len(obj)
         if n <= 0xff:
@@ -756,7 +871,7 @@ class _Pickler:
             self.write(UNICODE + obj.encode('raw-unicode-escape') +
                        b'\n')
         self.memoize(obj)
-    dispatch[str] = save_str
+    dispatch[six.text_type] = save_str
 
     def save_tuple(self, obj):
         if not obj: # tuple is empty
@@ -955,9 +1070,10 @@ class _Pickler:
             module = sys.modules[module_name]
             obj2, parent = _getattribute(module, name)
         except (ImportError, KeyError, AttributeError):
-            raise PicklingError(
+            six.raise_from(PicklingError(
                 "Can't pickle %r: it's not found as %s.%s" %
-                (obj, module_name, name)) from None
+                (obj, module_name, name)),
+                None)
         else:
             if obj2 is not obj:
                 raise PicklingError(
@@ -1000,9 +1116,10 @@ class _Pickler:
                 write(GLOBAL + bytes(module_name, "ascii") + b'\n' +
                       bytes(name, "ascii") + b'\n')
             except UnicodeEncodeError:
-                raise PicklingError(
+                six.raise_from(PicklingError(
                     "can't pickle global identifier '%s.%s' using "
-                    "pickle protocol %i" % (module, name, self.proto)) from None
+                    "pickle protocol %i" % (module, name, self.proto)),
+                    None)
 
         self.memoize(obj)
 
@@ -1011,8 +1128,8 @@ class _Pickler:
             return self.save_reduce(type, (None,), obj=obj)
         elif obj is type(NotImplemented):
             return self.save_reduce(type, (NotImplemented,), obj=obj)
-        elif obj is type(...):
-            return self.save_reduce(type, (...,), obj=obj)
+        elif obj is type(Ellipsis):
+            return self.save_reduce(type, (Ellipsis,), obj=obj)
         return self.save_global(obj)
 
     dispatch[FunctionType] = save_global
@@ -1021,9 +1138,9 @@ class _Pickler:
 
 # Unpickling machinery
 
-class _Unpickler:
+class _Unpickler(object):
 
-    def __init__(self, file, *, fix_imports=True,
+    def __init__(self, file, fix_imports=True,
                  encoding="ASCII", errors="strict"):
         """This takes a binary file for reading a pickle data stream.
 
@@ -1102,7 +1219,7 @@ class _Unpickler:
     dispatch = {}
 
     def load_proto(self):
-        proto = self.read(1)[0]
+        proto = unpack('B', self.read(1))[0]
         if not 0 <= proto <= HIGHEST_PROTOCOL:
             raise ValueError("unsupported pickle protocol: %d" % proto)
         self.proto = proto
@@ -1157,7 +1274,7 @@ class _Unpickler:
     dispatch[BININT[0]] = load_binint
 
     def load_binint1(self):
-        self.append(self.read(1)[0])
+        self.append(unpack('B', self.read(1))[0])
     dispatch[BININT1[0]] = load_binint1
 
     def load_binint2(self):
@@ -1172,7 +1289,7 @@ class _Unpickler:
     dispatch[LONG[0]] = load_long
 
     def load_long1(self):
-        n = self.read(1)[0]
+        n = unpack('B', self.read(1))[0]
         data = self.read(n)
         self.append(decode_long(data))
     dispatch[LONG1[0]] = load_long1
@@ -1231,7 +1348,7 @@ class _Unpickler:
     dispatch[BINBYTES[0]] = load_binbytes
 
     def load_unicode(self):
-        self.append(str(self.readline()[:-1], 'raw-unicode-escape'))
+        self.append(six.text_type(self.readline()[:-1], 'raw-unicode-escape'))
     dispatch[UNICODE[0]] = load_unicode
 
     def load_binunicode(self):
@@ -1239,7 +1356,7 @@ class _Unpickler:
         if len > maxsize:
             raise UnpicklingError("BINUNICODE exceeds system's maximum size "
                                   "of %d bytes" % maxsize)
-        self.append(str(self.read(len), 'utf-8', 'surrogatepass'))
+        self.append(six.text_type(self.read(len), 'utf-8', 'surrogatepass'))
     dispatch[BINUNICODE[0]] = load_binunicode
 
     def load_binunicode8(self):
@@ -1247,7 +1364,7 @@ class _Unpickler:
         if len > maxsize:
             raise UnpicklingError("BINUNICODE8 exceeds system's maximum size "
                                   "of %d bytes" % maxsize)
-        self.append(str(self.read(len), 'utf-8', 'surrogatepass'))
+        self.append(six.text_type(self.read(len), 'utf-8', 'surrogatepass'))
     dispatch[BINUNICODE8[0]] = load_binunicode8
 
     def load_binbytes8(self):
@@ -1259,19 +1376,19 @@ class _Unpickler:
     dispatch[BINBYTES8[0]] = load_binbytes8
 
     def load_short_binstring(self):
-        len = self.read(1)[0]
+        len = unpack('B', self.read(1))[0]
         data = self.read(len)
         self.append(self._decode_string(data))
     dispatch[SHORT_BINSTRING[0]] = load_short_binstring
 
     def load_short_binbytes(self):
-        len = self.read(1)[0]
+        len = unpack('B', self.read(1))[0]
         self.append(self.read(len))
     dispatch[SHORT_BINBYTES[0]] = load_short_binbytes
 
     def load_short_binunicode(self):
-        len = self.read(1)[0]
-        self.append(str(self.read(len), 'utf-8', 'surrogatepass'))
+        len = unpack('B', self.read(1))[0]
+        self.append(six.text_type(self.read(len), 'utf-8', 'surrogatepass'))
     dispatch[SHORT_BINUNICODE[0]] = load_short_binunicode
 
     def load_tuple(self):
@@ -1336,7 +1453,7 @@ class _Unpickler:
                 value = klass(*args)
             except TypeError as err:
                 raise TypeError("in constructor for %s: %s" %
-                                (klass.__name__, str(err)), sys.exc_info()[2])
+                                (klass.__name__, six.text_type(err)), sys.exc_info()[2])
         else:
             value = klass.__new__(klass)
         self.append(value)
@@ -1380,13 +1497,13 @@ class _Unpickler:
     def load_stack_global(self):
         name = self.stack.pop()
         module = self.stack.pop()
-        if type(name) is not str or type(module) is not str:
-            raise UnpicklingError("STACK_GLOBAL requires str")
+        if type(name) is not six.text_type or type(module) is not text_type:
+            raise UnpicklingError("STACK_GLOBAL requires %s" % six.text_type)
         self.append(self.find_class(module, name))
     dispatch[STACK_GLOBAL[0]] = load_stack_global
 
     def load_ext1(self):
-        code = self.read(1)[0]
+        code = unpack('B', self.read(1))[0]
         self.get_extension(code)
     dispatch[EXT1[0]] = load_ext1
 
@@ -1457,7 +1574,7 @@ class _Unpickler:
     dispatch[GET[0]] = load_get
 
     def load_binget(self):
-        i = self.read(1)[0]
+        i = unpack('B', self.read(1))[0]
         self.append(self.memo[i])
     dispatch[BINGET[0]] = load_binget
 
@@ -1474,7 +1591,7 @@ class _Unpickler:
     dispatch[PUT[0]] = load_put
 
     def load_binput(self):
-        i = self.read(1)[0]
+        i = unpack('B', self.read(1))[0]
         if i < 0:
             raise ValueError("negative BINPUT argument")
         self.memo[i] = self.stack[-1]
@@ -1558,7 +1675,7 @@ class _Unpickler:
             inst_dict = inst.__dict__
             intern = sys.intern
             for k, v in state.items():
-                if type(k) is str:
+                if type(k) is six.text_type:
                     inst_dict[intern(k)] = v
                 else:
                     inst_dict[k] = v
@@ -1581,41 +1698,46 @@ class _Unpickler:
 
 # Shorthands
 
-def _dump(obj, file, protocol=None, *, fix_imports=True):
+def _dump(obj, file, protocol=None, fix_imports=True):
     _Pickler(file, protocol, fix_imports=fix_imports).dump(obj)
 
-def _dumps(obj, protocol=None, *, fix_imports=True):
+def _dumps(obj, protocol=None, fix_imports=True):
     f = io.BytesIO()
     _Pickler(f, protocol, fix_imports=fix_imports).dump(obj)
     res = f.getvalue()
     assert isinstance(res, bytes_types)
     return res
 
-def _load(file, *, fix_imports=True, encoding="ASCII", errors="strict"):
+def _load(file, fix_imports=True, encoding="ASCII", errors="strict"):
     return _Unpickler(file, fix_imports=fix_imports,
                      encoding=encoding, errors=errors).load()
 
-def _loads(s, *, fix_imports=True, encoding="ASCII", errors="strict"):
-    if isinstance(s, str):
+def _loads(s, fix_imports=True, encoding="ASCII", errors="strict"):
+    if isinstance(s, six.text_type):
         raise TypeError("Can't load pickle from unicode string")
     file = io.BytesIO(s)
     return _Unpickler(file, fix_imports=fix_imports,
                       encoding=encoding, errors=errors).load()
 
 # Use the faster _pickle if possible
-try:
-    from _pickle import (
-        PickleError,
-        PicklingError,
-        UnpicklingError,
-        Pickler,
-        Unpickler,
-        dump,
-        dumps,
-        load,
-        loads
-    )
-except ImportError:
+
+if sys.version_info[:2] >= (3, 7):
+    try:
+        from _pickle import (
+            PickleError,
+            PicklingError,
+            UnpicklingError,
+            Pickler,
+            Unpickler,
+            dump,
+            dumps,
+            load,
+            loads
+        )
+    except ImportError:
+        Pickler, Unpickler = _Pickler, _Unpickler
+        dump, dumps, load, loads = _dump, _dumps, _load, _loads
+else:
     Pickler, Unpickler = _Pickler, _Unpickler
     dump, dumps, load, loads = _dump, _dumps, _load, _loads
 

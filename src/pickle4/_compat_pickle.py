@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 # This module is used to map the old Python 2 names to the new names used in
 # Python 3 for the pickle module.  This needed to make pickle streams
 # generated with Python 2 loadable by Python 3.
