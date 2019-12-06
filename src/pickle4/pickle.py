@@ -481,7 +481,7 @@ except AttributeError:
 try:
     _decode_long_int_from_bytes(b"\x7f")
     decode_long = _decode_long_int_from_bytes
-except AttributeError
+except AttributeError:
     decode_long = _decode_long
 
 # Pickling machinery
