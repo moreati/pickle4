@@ -844,7 +844,7 @@ class _Pickler(object):
     dispatch[float] = save_float
 
     def save_bytes(self, obj):
-        if self.proto < 3:
+        if six.PY3 and self.proto < 3:
             if not obj: # bytes object is empty
                 self.save_reduce(bytes, (), obj=obj)
             else:
@@ -1548,7 +1548,7 @@ class _Unpickler(object):
 
     def find_class(self, module, name):
         # Subclasses may override this.
-        if self.proto < 3 and self.fix_imports:
+        if six.PY3 and self.proto < 3 and self.fix_imports:
             if (module, name) in _compat_pickle.NAME_MAPPING:
                 module, name = _compat_pickle.NAME_MAPPING[(module, name)]
             elif module in _compat_pickle.IMPORT_MAPPING:
