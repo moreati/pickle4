@@ -1,0 +1,42 @@
+from setuptools import find_packages, setup
+
+setup(
+    name='pickle4',
+    version='0.0.1',
+    description='Backport of pickle protocol 4',
+    author='Alex Willmer',
+    author_email='alex@moreati.org.uk',
+    url='https://github.com/moreati/pickle4',
+    license='PSFL 2',
+    long_description="",
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'License :: OSI Approved :: Python Software Foundation License',
+        'Operating System :: MacOS :: MacOS X',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: Unix',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8'
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: Implementation :: CPython',
+        'Programming Language :: Python :: Implementation :: Jython',
+        'Programming Language :: Python :: Implementation :: PyPy',
+        'Programming Language :: Python',
+        'Topic :: Database',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+    ],
+    keywords='pickle',
+    platforms=['any'],
+    packages=find_packages('src'),
+    package_dir={'': 'src'},
+    install_requires=[
+        'setuptools',
+    ],
+    include_package_data=True,
+    zip_safe=True,
+)
