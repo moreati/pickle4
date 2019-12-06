@@ -376,6 +376,8 @@ def _decode_long_int_from_bytes(data):
     """
     return int.from_bytes(data, byteorder='little', signed=True)
 
+import binascii as _binascii
+
 def _encode_long(x):
     r"""Encode a long to a two's complement little-endian binary string.
     Note that 0 is a special case, returning an empty string, to save a
