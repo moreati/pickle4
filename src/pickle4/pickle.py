@@ -470,7 +470,7 @@ def _decode_long(data):
     n = int(ashex, 16) # quadratic time before Python 2.3; linear now
     if unpack('B', data[-1])[0] >= 0x80:
         n -= 1 << (nbytes * 8)
-    return n
+    return int(n)
 
 try:
     _encode_long_int_to_bytes(42)
@@ -819,11 +819,22 @@ class _Pickler(object):
             else:
                 self.write(LONG4 + pack("<i", n) + encoded)
             return
-        if -0x80000000 <= obj <= 0x7fffffff:
-            self.write(INT + repr(obj).encode("ascii") + b'\n')
+        if six.PY2:
+            if type(obj) is int:
+                self.write(INT + repr(obj) + b'\n')
+            else:
+                self.write(LONG + repr(obj) + b'\n')
         else:
-            self.write(LONG + repr(obj).encode("ascii") + b'L\n')
+            if -0x80000000 <= obj <= 0x7fffffff:
+                self.write(INT + repr(obj).encode("ascii") + b'\n')
+            else:
+                self.write(LONG + repr(obj).encode("ascii") + b'L\n')
     dispatch[int] = save_long
+
+    try:
+        dispatch[long] = save_long
+    except NameError:
+        pass
 
     def save_float(self, obj):
         if self.bin:
