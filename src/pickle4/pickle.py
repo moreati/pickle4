@@ -1098,14 +1098,14 @@ class _Pickler(object):
             name = lastname
         # Non-ASCII identifiers are supported only with protocols >= 3.
         if self.proto >= 4:
-            self.save(module_name)
-            self.save(name)
+            self.save(six.ensure_text(module_name, 'ascii'))
+            self.save(six.ensure_text(name, 'ascii'))
             write(STACK_GLOBAL)
         elif parent is not module:
             self.save_reduce(getattr, (parent, lastname))
         elif self.proto >= 3:
-            write(GLOBAL + bytes(module_name, "utf-8") + b'\n' +
-                  bytes(name, "utf-8") + b'\n')
+            write(GLOBAL + six.ensure_binary(module_name, "utf-8") + b'\n' +
+                  six.ensure_binary(name, "utf-8") + b'\n')
         else:
             if self.fix_imports:
                 r_name_mapping = _compat_pickle.REVERSE_NAME_MAPPING
@@ -1115,8 +1115,8 @@ class _Pickler(object):
                 elif module_name in r_import_mapping:
                     module_name = r_import_mapping[module_name]
             try:
-                write(GLOBAL + bytes(module_name, "ascii") + b'\n' +
-                      bytes(name, "ascii") + b'\n')
+                write(GLOBAL + six.ensure_binary(module_name, "ascii") + b'\n' +
+                      six.ensure_binary(name, "ascii") + b'\n')
             except UnicodeEncodeError:
                 six.raise_from(PicklingError(
                     "can't pickle global identifier '%s.%s' using "
@@ -1499,7 +1499,7 @@ class _Unpickler(object):
     def load_stack_global(self):
         name = self.stack.pop()
         module = self.stack.pop()
-        if type(name) is not six.text_type or type(module) is not text_type:
+        if type(name) is not six.text_type or type(module) is not six.text_type:
             raise UnpicklingError("STACK_GLOBAL requires %s" % six.text_type)
         self.append(self.find_class(module, name))
     dispatch[STACK_GLOBAL[0]] = load_stack_global
@@ -1675,7 +1675,7 @@ class _Unpickler(object):
             state, slotstate = state
         if state:
             inst_dict = inst.__dict__
-            intern = sys.intern
+            intern = six.moves.intern
             for k, v in state.items():
                 if type(k) is six.text_type:
                     inst_dict[intern(k)] = v
