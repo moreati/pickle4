@@ -1,6 +1,7 @@
 include *.py
 
 recursive-include src *
+recursive-include tests *
 
 global-exclude *.dll
 global-exclude *.pyc
